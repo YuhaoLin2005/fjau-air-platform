@@ -1,0 +1,47 @@
+[
+ {
+  "name": "health",
+  "concurrency": 4,
+  "n": 40,
+  "qps": 29.7,
+  "p50_ms": 165.5,
+  "p95_ms": 264.9,
+  "err_rate": 0.0
+ },
+ {
+  "name": "route(避淹路径)",
+  "concurrency": 20,
+  "n": 200,
+  "qps": 50.0,
+  "p50_ms": 15.9,
+  "p95_ms": 2795.6,
+  "err_rate": 0.0
+ },
+ {
+  "name": "service_area",
+  "concurrency": 20,
+  "n": 200,
+  "qps": 109.3,
+  "p50_ms": 23.2,
+  "p95_ms": 1530.3,
+  "err_rate": 0.0
+ },
+ {
+  "name": "sensors+alerts",
+  "concurrency": 20,
+  "n": 200,
+  "qps": 32.6,
+  "p50_ms": 538.2,
+  "p95_ms": 1698.2,
+  "err_rate": 0.0
+ },
+ {
+  "name": "ogc items(pois)",
+  "concurrency": 20,
+  "n": 200,
+  "qps": 17.5,
+  "p50_ms": 861.3,
+  "p95_ms": 4368.0,
+  "err_rate": 0.0
+ }
+]

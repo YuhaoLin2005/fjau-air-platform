@@ -1,0 +1,56 @@
+{
+ "passed": 7,
+ "total": 7,
+ "duration_s": 8.8,
+ "oracles": [
+  "NetworkX(路径)",
+  "解析几何(缓冲)",
+  "pyproj/PROJ(测地线)",
+  "经典BFS有源淹没算法",
+  "WebMercator参考值"
+ ],
+ "results": [
+  {
+   "id": "V1",
+   "module": "最短路径（Dijkstra）",
+   "detail": "30/30 组一致（最大相对偏差 0.0016%，容差 0.5%）",
+   "pass": true
+  },
+  {
+   "id": "V2",
+   "module": "服务区（DrivingDistance）",
+   "detail": "可达节点集 Jaccard=1.0000（pgr 4 vs nx 4，门限 0.98）",
+   "pass": true
+  },
+  {
+   "id": "V3",
+   "module": "缓冲区（解析几何基准）",
+   "detail": "面积 780014 m² vs πr²=785398 m²（偏差 0.686%，门限 1%）",
+   "pass": true
+  },
+  {
+   "id": "V4",
+   "module": "测地线距离（pyproj 基准）",
+   "detail": "1743.08 m vs 1743.08 m（偏差 0.00000%，门限 0.1%）",
+   "pass": true
+  },
+  {
+   "id": "V5",
+   "module": "淹没连通性（BFS 独立实现互证）",
+   "detail": "两算法栅格 IoU=1.0000（门限 0.99）",
+   "pass": true
+  },
+  {
+   "id": "V6",
+   "module": "WebMercator 瓦片数学（OSM Wiki 样例基准）",
+   "detail": "原点=True；北京z10 → (843.11,388.02) 取整 (843,388)=True",
+   "pass": true
+  },
+  {
+   "id": "V7",
+   "module": "插值方法互证（pykrige 基准）",
+   "detail": "相关系数 r=0.9746（门限 0.85）· 均值偏差 1.1%（门限 25%）",
+   "pass": true
+  }
+ ]
+}

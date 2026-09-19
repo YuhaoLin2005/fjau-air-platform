@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="flood">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>运维控制台 · 福州城市空气质量时空插值分析与预警平台</title>
+<style>
+  /* 设计令牌：与 index.html 同源（flood 主题） */
+  :root {
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:22px; --sp-6:28px;
+    --r-sm:8px; --r-md:12px; --r-lg:16px; --r-pill:999px;
+    --fs-xs:12px; --fs-sm:13px; --fs-base:15px; --fs-md:17px; --fs-lg:20px;
+    --lh-tight:1.35; --lh-base:1.6;
+    --ease:cubic-bezier(.2,.7,.3,1); --dur:.14s;
+    --panel:#FFFFFF; --soft:#EEF3F8; --line:#E2E9F0; --line-strong:#CBD7E3;
+    --ink:#1F2A36; --muted:#63737F; --faint:#93A2AF;
+    --accent:#1D6FB8; --accent-strong:#0D3B66; --accent-soft:#E8F1F9;
+    --hot:#C0392B; --hot-soft:#FBEDEA; --warn:#C2571A; --ok:#2E7D52; --ok-soft:#EAF5EF;
+    --font-body:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    --font-display:Georgia,"Noto Serif SC","Songti SC","SimSun",serif;
+    --shadow:0 14px 40px rgba(15,40,70,.10);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#F2F5F8; font-family:var(--font-body); color:var(--ink);
+    font-size:var(--fs-base); line-height:var(--lh-base); min-height:100vh; }
+  header { background:linear-gradient(90deg,var(--accent-strong),#14548C 65%,var(--accent));
+    color:#fff; padding:var(--sp-4) var(--sp-6); display:flex; align-items:center; gap:var(--sp-4); }
+  header .logo { font-family:var(--font-display); font-size:var(--fs-lg); font-weight:700; }
+  header .sub { font-size:var(--fs-xs); opacity:.72; letter-spacing:.05em; }
+  header .back { margin-left:auto; color:#fff; text-decoration:none; font-size:var(--fs-sm);
+    border:1px solid rgba(255,255,255,.4); border-radius:var(--r-sm); padding:5px var(--sp-4); }
+  main { max-width:1180px; margin:0 auto; padding:var(--sp-5); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:var(--sp-4); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r-lg);
+    box-shadow:var(--shadow); overflow:hidden; }
+  .card h3 { font-size:var(--fs-sm); color:var(--accent-strong); padding:var(--sp-3) var(--sp-4);
+    background:var(--soft); border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center; }
+  .card h3 .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
+  .card .body { padding:var(--sp-4); font-size:var(--fs-sm); }
+  table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
+  th,td { text-align:left; padding:6px var(--sp-2); border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .tag { display:inline-block; padding:1px 8px; border-radius:var(--r-pill); font-size:var(--fs-xs);
+    color:#fff; }
+  .kv { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px dashed var(--line); }
+  .kv b { font-variant-numeric:tabular-nums; }
+  .btn { background:var(--accent); color:#fff; border:none; border-radius:var(--r-sm);
+    padding:7px var(--sp-4); font-size:var(--fs-sm); cursor:pointer; font-family:var(--font-body);
+    transition:all var(--dur) var(--ease); }
+  .btn:hover { background:var(--accent-strong); }
+  .btn.red { background:var(--hot); }
+  #loginMask { position:fixed; inset:0; background:rgba(31,42,54,.5); display:flex;
+    align-items:center; justify-content:center; z-index:10; }
+  #loginMask .modal { background:var(--panel); border-radius:var(--r-lg); padding:var(--sp-5);
+    width:340px; box-shadow:var(--shadow); }
+  #loginMask h3 { color:var(--accent-strong); margin-bottom:var(--sp-3); font-family:var(--font-display); }
+  #loginMask input { width:100%; padding:8px var(--sp-2); margin:var(--sp-1) 0 var(--sp-3);
+    border:1px solid var(--line-strong); border-radius:var(--r-sm); font-size:var(--fs-sm); }
+  #loginMask .err { color:var(--hot); font-size:var(--fs-xs); min-height:16px; }
+  .refresh-note { color:var(--faint); font-size:var(--fs-xs); font-weight:400; }
+  .empty { color:var(--faint); text-align:center; padding:var(--sp-4); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="logo">运维控制台</div>
+    <div class="sub">Ops Console · 感知 / 用户 / 会话 / 服务指标</div>
+  </div>
+  <a class="back" href="/">← 返回地图系统</a>
+</header>
+
+<div id="loginMask">
+  <div class="modal">
+    <h3>管理员登录</h3>
+    <input type="text" id="user" placeholder="用户名">
+    <input type="password" id="pwd" placeholder="密码">
+    <div class="err" id="err"></div>
+    <button class="btn" id="loginBtn" style="width:100%">登录控制台</button>
+  </div>
+</div>
+
+<main style="display:none" id="app">
+  <div class="grid">
+    <div class="card">
+      <h3><span><span class="dot" id="healthDot"></span>服务状态</span><span class="refresh-note">5s 自动刷新</span></h3>
+      <div class="body" id="healthBody"></div>
+    </div>
+    <div class="card">
+      <h3>城市预警态势<span class="refresh-note">模拟演示口径（无公开实时水位源）</span></h3>
+      <div class="body" id="alertBody"></div>
+    </div>
+    <div class="card">
+      <h3>服务指标（/metrics）</h3>
+      <div class="body" id="metricsBody"></div>
+    </div>
+    <div class="card" style="grid-column:1/-1">
+      <h3>IoT 感知站 · 最新遥测</h3>
+      <div class="body"><table id="sensorTable"></table></div>
+    </div>
+    <div class="card">
+      <h3>用户管理</h3>
+      <div class="body"><table id="userTable"></table></div>
+    </div>
+    <div class="card" style="grid-column:1/-1">
+      <h3>数据资产 · 版本与新鲜度（DataOps）</h3>
+      <div class="body"><table id="dataopsTable"></table></div>
+    </div>
+    <div class="card">
+      <h3>活跃会话</h3>
+      <div class="body"><table id="sessionTable"></table></div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/admin.js"></script>
+</body>
+</html>

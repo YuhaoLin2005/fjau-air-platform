@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="aq">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>福州城市空气质量时空插值分析与预警平台</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/lib/leaflet.css">
+<script src="/lib/leaflet.js"></script>
+<script src="/lib/echarts.min.js"></script>
+<script src="/lib/html2canvas.min.js"></script>
+<style>
+  /* ============================================================
+     福州空气质量平台 · 设计令牌层（架构移植自 YOGE 设计系统）
+     尺寸令牌（间距/圆角/字阶/动效）全局共享；颜色令牌按主题分组：
+     [data-theme="aq"] = 空气质量暖纸面中性 UI + AQI 六级数据色带（--aq-1..6）
+     洪涝（一阶段成果¹）数据编码色保留冷调，仅存在于其功能上下文，不进 UI 主色。
+     ============================================================ */
+  :root {
+    --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+    --sp-5: 22px; --sp-6: 28px; --sp-7: 36px; --sp-8: 48px;
+    --r-sm: 8px;  --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+    --fs-xs: 12px; --fs-sm: 13px; --fs-base: 15px; --fs-md: 17px;
+    --fs-lg: 20px; --fs-xl: 26px; --fs-2xl: 32px;
+    --lh-tight: 1.35; --lh-base: 1.6; --lh-loose: 1.8;
+    --ease: cubic-bezier(.2, .7, .3, 1);
+    --dur: .14s;
+    --nav-h: 56px;
+    /* AQI 六级数据色带（逐值镜像后端 airquality.py LEVEL_COLOR） */
+    --aq-1: #2E7D52; --aq-2: #C9A227; --aq-3: #E67E22;
+    --aq-4: #C0392B; --aq-5: #8E2A3C; --aq-6: #5B1220;
+  }
+  [data-theme="aq"] {
+    /* 底色与层次（暖调纸面） */
+    --bg: #F7F4EF;  --panel: #FFFFFF;  --soft: #F4EFE7;
+    --line: #E8E1D5; --line-strong: #D6CCBC;
+    /* 文字 */
+    --ink: #2A2520; --muted: #7A6F62; --faint: #A99C8C;
+    /* 主色：青灰（环境/大气语义，不与 AQI 暖色带同域竞争） */
+    --accent: #0E7C86; --accent-strong: #0A4A52; --accent-soft: #E5F1F2;
+    --on-accent: #FFFFFF;
+    /* 语义色 */
+    --ok: #2E7D52;   --ok-soft: #EAF5EF;
+    --info: #4A6B93; --info-soft: #EDF1F6;
+    --warn: #C2571A; --warn-soft: #FBF0E6;
+    --hot: #C0392B;  --hot-soft: #FBEDEA;
+    /* 字体 */
+    --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --font-display: Georgia, "Noto Serif SC", "Songti SC", "SimSun", serif;
+    /* 阴影 */
+    --shadow: 0 14px 40px rgba(60, 48, 30, .10);
+    --shadow-hover: 0 10px 24px rgba(10, 74, 82, .14);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; font-family:var(--font-body); overflow:hidden;
+    font-size:var(--fs-base); color:var(--ink); line-height:var(--lh-base); }
+  #map { position:absolute; top:var(--nav-h); left:0; right:0; bottom:0; background:#E5E0D6; }
+
+  /* ---- 顶栏 ---- */
+  #topbar { position:absolute; top:0; left:0; right:0; height:var(--nav-h); z-index:1200;
+    background:linear-gradient(90deg, var(--accent-strong) 0%, #10616A 65%, var(--accent) 100%);
+    color:#fff; display:flex; align-items:center; padding:0 var(--sp-5); gap:var(--sp-4);
+    box-shadow:0 2px 12px rgba(10,74,82,.35); }
+  #topbar .logo { font-family:var(--font-display); font-size:var(--fs-lg); font-weight:700;
+    letter-spacing:.02em; white-space:nowrap; }
+  #topbar .sub { font-size:var(--fs-xs); opacity:.72; white-space:nowrap; letter-spacing:.05em; }
+  #topbar .spacer { flex:1; }
+  #userbox { display:flex; align-items:center; gap:var(--sp-2); font-size:var(--fs-sm); }
+  .tb-btn { background:rgba(255,255,255,.14); color:#fff; display:inline-block;
+    border:1px solid rgba(255,255,255,.38); border-radius:var(--r-sm);
+    padding:5px var(--sp-4); cursor:pointer; font-size:var(--fs-sm); text-decoration:none;
+    font-family:var(--font-body); transition:background var(--dur) var(--ease), transform var(--dur) var(--ease); }
+  .tb-btn:hover { background:rgba(255,255,255,.30); transform:translateY(-1px); }
+
+  /* ---- 左侧弹性列（现状卡 + 面板堆叠，互不遮挡） ---- */
+  #leftCol { position:absolute; top:calc(var(--nav-h) + var(--sp-3)); left:var(--sp-3);
+    width:316px; max-height:calc(100% - var(--nav-h) - var(--sp-6)); z-index:1100;
+    display:flex; flex-direction:column; gap:var(--sp-2); pointer-events:none; }
+  #leftCol > * { pointer-events:auto; }
+
+  /* ---- 现状卡（首屏即答） ---- */
+  #statusCard { position:static; width:100%; flex:0 0 auto;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--r-lg); box-shadow:var(--shadow); padding:var(--sp-4); }
+  #statusBody.is-loading .skel-line { display:block; }
+  #statusCard .status-main { display:flex; align-items:center; gap:var(--sp-3); }
+  .aq-badge { display:inline-block; color:#fff; font-weight:700; border-radius:var(--r-sm);
+    padding:3px 12px; font-size:var(--fs-md); font-family:var(--font-display); }
+  .status-title { font-size:var(--fs-md); font-weight:700; color:var(--accent-strong); }
+  .status-sub { font-size:var(--fs-sm); color:var(--muted); margin-top:var(--sp-1); }
+  .dist-bar { display:flex; height:8px; border-radius:var(--r-pill); overflow:hidden;
+    margin:var(--sp-2) 0; background:var(--soft); }
+  .dist-bar span { display:block; }
+  .status-advice { font-size:var(--fs-xs); color:var(--ink); line-height:var(--lh-loose);
+    padding:var(--sp-2) var(--sp-3); background:var(--soft); border-radius:var(--r-sm); }
+  .status-src { font-size:11px; color:var(--faint); margin-top:var(--sp-2); }
+
+  /* ---- 骨架屏三态 ---- */
+  .skel-line { display:none; height:14px; border-radius:var(--r-pill); margin:var(--sp-2) 0;
+    background:linear-gradient(90deg, var(--soft) 25%, #fff 50%, var(--soft) 75%);
+    background-size:200% 100%; animation:skel 1.2s infinite; }
+  @keyframes skel { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
+  .empty { color:var(--muted); text-align:center; padding:var(--sp-4); font-size:var(--fs-sm); }
+
+  /* ---- 左侧功能面板（弹性列内自动堆叠） ---- */
+  #panel { position:static; width:100%; flex:1 1 auto; min-height:0;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--r-lg);
+    box-shadow:var(--shadow); overflow-y:auto; }
+  .tabbar { display:flex; border-bottom:1px solid var(--line);
+    background:var(--soft); border-radius:var(--r-lg) var(--r-lg) 0 0; padding:var(--sp-1); gap:2px; }
+  .tabbar .tab { flex:1; text-align:center; padding:var(--sp-2) 2px; font-size:var(--fs-sm);
+    min-height:44px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; color:var(--muted); border-radius:var(--r-sm); user-select:none;
+    transition:all var(--dur) var(--ease); }
+  .tabbar .tab:hover { color:var(--accent-strong); }
+  .tabbar .tab.active { color:#fff; font-weight:700; background:var(--accent);
+    box-shadow:0 2px 8px rgba(14,124,134,.35); }
+  .tab sup { color:var(--warn); font-weight:700; }
+  .page { display:none; padding:var(--sp-4) var(--sp-4) var(--sp-5); }
+  .page.active { display:block; }
+  .page h4 { font-size:var(--fs-sm); color:var(--accent-strong); margin:var(--sp-4) 0 var(--sp-2);
+    padding-left:var(--sp-2); border-left:3px solid var(--accent); line-height:var(--lh-tight); }
+  .page .hint { font-size:var(--fs-xs); color:var(--muted); line-height:var(--lh-loose); margin-bottom:var(--sp-2); }
+  .btn { display:inline-block; background:var(--accent); color:var(--on-accent); border:none;
+    border-radius:var(--r-sm); padding:8px var(--sp-4); font-size:var(--fs-sm); cursor:pointer;
+    min-height:36px; margin:3px 4px 3px 0; font-family:var(--font-body);
+    transition:all var(--dur) var(--ease); box-shadow:0 2px 6px rgba(14,124,134,.22); }
+  .btn:hover { background:var(--accent-strong); transform:translateY(-1px);
+    box-shadow:0 6px 14px rgba(10,74,82,.25); }
+  .btn:active { transform:translateY(0); }
+  .btn.gray { background:#9C9080; box-shadow:none; }
+  .btn.gray:hover { background:#84796B; }
+  .btn.orange { background:var(--warn); box-shadow:0 2px 6px rgba(194,87,26,.22); }
+  .btn.red { background:var(--hot); }
+  .btn.active-tool { outline:2px solid var(--warn); outline-offset:1px; }
+  .btn-sm { padding:4px 10px; min-height:28px; font-size:var(--fs-xs); }
+  .btn.locked { background:#C9BFae; cursor:not-allowed; opacity:.75; }
+  .btn.locked::after { content:' 🔒'; font-size:11px; }
+  select,input[type=text],input[type=password],input[type=number] {
+    padding:7px var(--sp-2); border:1px solid var(--line-strong); border-radius:var(--r-sm);
+    font-size:var(--fs-sm); width:100%; font-family:var(--font-body); color:var(--ink);
+    background:var(--panel); transition:border-color var(--dur) var(--ease); }
+  select:focus,input:focus { outline:none; border-color:var(--accent);
+    box-shadow:0 0 0 3px var(--accent-soft); }
+  .row { display:flex; gap:var(--sp-2); margin:var(--sp-2) 0; align-items:center; }
+  .row label { font-size:var(--fs-sm); color:var(--ink); white-space:nowrap; }
+  .result { background:var(--accent-soft); border:1px solid #D2E4E6; border-left:3px solid var(--accent);
+    border-radius:var(--r-md); padding:var(--sp-3) var(--sp-4); font-size:var(--fs-sm);
+    margin-top:var(--sp-3); line-height:var(--lh-loose); color:var(--accent-strong); display:none; }
+  .result.show { display:block; }
+  .result b { color:var(--hot); }
+
+  /* ---- 图层树 ---- */
+  .layer-item { display:flex; align-items:center; gap:var(--sp-2); padding:5px 0 5px var(--sp-1);
+    min-height:36px; font-size:var(--fs-sm); border-radius:var(--r-sm);
+    transition:background var(--dur) var(--ease); }
+  .layer-item:hover { background:var(--soft); }
+  .layer-item input { width:auto; accent-color:var(--accent); }
+  .swatch { width:16px; height:10px; border-radius:3px; display:inline-block;
+    border:1px solid rgba(0,0,0,.18); }
+  .legacy-block { border:1px dashed var(--line-strong); border-radius:var(--r-md);
+    padding:var(--sp-2) var(--sp-3); margin-top:var(--sp-2); }
+
+  /* ---- 一阶段成果¹ 子页导航 ---- */
+  .legacy-nav { display:flex; flex-wrap:wrap; gap:2px; margin-bottom:var(--sp-2); }
+  .legacy-nav .btn { min-height:32px; padding:5px 10px; font-size:var(--fs-xs); }
+  .legacy-nav .btn.active { outline:2px solid var(--warn); outline-offset:1px; }
+  .legacy-page { display:none; }
+  .legacy-page.active { display:block; }
+
+  /* ---- 滑块 ---- */
+  #levelSlider,#saMin,#tsSlider { width:100%; accent-color:var(--accent); height:4px; }
+  .level-val { font-family:var(--font-display); font-size:var(--fs-md); font-weight:700; color:var(--accent-strong); }
+
+  /* ---- 右下统计卡 ---- */
+  #statCard { position:absolute; right:var(--sp-3); bottom:var(--sp-3);
+    width:min(372px, calc(100vw - 24px)); height:308px;
+    z-index:1100; background:var(--panel); border:1px solid var(--line); border-radius:var(--r-lg);
+    box-shadow:var(--shadow); display:none; flex-direction:column; overflow:hidden; }
+  #statCard.show { display:flex; }
+  #statCard .head { padding:var(--sp-3) var(--sp-4); font-size:var(--fs-sm); font-weight:700;
+    color:var(--accent-strong); border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center; background:var(--soft); }
+  #statCard .head span.close { cursor:pointer; color:var(--faint); font-size:var(--fs-md);
+    padding:0 var(--sp-1); border-radius:var(--r-sm); transition:all var(--dur) var(--ease); }
+  #statCard .head span.close:hover { color:var(--hot); background:var(--hot-soft); }
+  #statChart { flex:1; }
+
+  /* ---- 单一动态图例 ---- */
+  #legendBox { position:absolute; right:var(--sp-3); top:calc(var(--nav-h) + var(--sp-3)); z-index:1100;
+    background:rgba(255,255,255,.96); border:1px solid var(--line); border-radius:var(--r-md);
+    padding:var(--sp-3) var(--sp-4); font-size:var(--fs-xs); box-shadow:var(--shadow);
+    line-height:1.9; color:var(--ink); display:none; max-width:230px; }
+  #legendBox b { color:var(--accent-strong); font-size:var(--fs-sm); }
+  #legendBox .lg-src { display:block; color:var(--faint); font-size:11px; }
+  .lg-row { display:flex; align-items:center; gap:6px; }
+  .lg-row .lg-range { margin-left:auto; color:var(--faint); font-variant-numeric:tabular-nums; }
+  .lg-row:hover { background:var(--soft); border-radius:var(--r-sm); }
+  .lg-tip { color:var(--faint); font-size:11px; border-top:1px dashed var(--line); margin-top:4px; }
+
+  /* ---- 时空分析 ---- */
+  #tsChart { width:100%; height:260px; }
+  #tsStack { display:flex; height:10px; border-radius:var(--r-pill); overflow:hidden;
+    margin:var(--sp-2) 0; background:var(--soft); }
+  #tsStack span { display:block; }
+  #tsReadout { font-size:var(--fs-sm); min-height:28px; margin-top:var(--sp-1); }
+  #tsBody .empty { padding:var(--sp-2); }
+
+  /* ---- 暴露评估 ---- */
+  .exp-num { font-size:var(--fs-md); color:var(--accent-strong); font-weight:700; }
+  .exp-row { font-size:var(--fs-sm); margin-top:var(--sp-1); }
+
+  /* ---- 弹窗 ---- */
+  .modal-mask { position:fixed; inset:0; background:rgba(42,37,32,.45); z-index:3000;
+    display:none; align-items:center; justify-content:center; backdrop-filter:blur(2px); }
+  .modal-mask.show { display:flex; }
+  .modal { background:var(--panel); border-radius:var(--r-lg); width:352px; max-width:calc(100vw - 24px);
+    padding:var(--sp-5); box-shadow:var(--shadow); max-height:80vh; overflow-y:auto; }
+  .modal h3 { font-size:var(--fs-md); color:var(--accent-strong); margin-bottom:var(--sp-4);
+    font-family:var(--font-display); }
+  .modal .row { flex-direction:column; gap:3px; align-items:stretch; }
+  .modal .err { color:var(--hot); font-size:var(--fs-xs); min-height:18px; margin:var(--sp-1) 0; }
+  .modal table { width:100%; border-collapse:collapse; font-size:var(--fs-xs); }
+  .modal th,.modal td { text-align:left; padding:5px var(--sp-1); border-bottom:1px solid var(--line); }
+
+  /* ---- 权限提示条（非模态 401 引导） ---- */
+  #permBar { position:fixed; top:calc(var(--nav-h) + var(--sp-3)); left:50%; transform:translateX(-50%);
+    z-index:3500; display:none; align-items:center; gap:var(--sp-3); background:rgba(42,37,32,.94);
+    color:#fff; padding:10px var(--sp-5); border-radius:var(--r-md); font-size:var(--fs-sm);
+    box-shadow:var(--shadow); }
+  #permLogin { background:var(--accent); border:none; color:#fff; border-radius:var(--r-sm);
+    padding:4px 12px; cursor:pointer; }
+  #permClose { cursor:pointer; opacity:.7; }
+
+  /* ---- toast ---- */
+  #toast { position:fixed; top:calc(var(--nav-h) + var(--sp-4)); left:50%;
+    transform:translateX(-50%); z-index:4000; background:rgba(42,37,32,.94);
+    color:#fff; padding:9px var(--sp-5); border-radius:var(--r-pill); font-size:var(--fs-sm);
+    display:none; max-width:62%; box-shadow:var(--shadow); }
+
+  /* ---- 预警横幅已下屏（2026-09-19 数据源审计：由模拟水位规则引擎驱动，不实上屏） ---- */
+
+  /* ---- Leaflet 控件融入令牌体系 ---- */
+  #map.aq-mode .leaflet-tile-pane { filter: grayscale(.88) brightness(1.02) contrast(.92); }
+  .leaflet-popup-content-wrapper { border-radius:var(--r-md); box-shadow:var(--shadow);
+    border:1px solid var(--line); }
+  .leaflet-popup-tip { box-shadow:none; }
+  .leaflet-bar a { color:var(--accent-strong) !important; }
+  .leaflet-control-zoom { border:1px solid var(--line) !important;
+    border-radius:var(--r-sm) !important; overflow:hidden; box-shadow:var(--shadow) !important; }
+
+  /* ---- 移动端 ≤768px：整列贴底，面板抽屉化 ---- */
+  #drawerToggle { display:none; }
+  @media (max-width: 768px) {
+    #leftCol { left:0; right:0; bottom:0; top:auto; width:auto;
+      max-height:calc(100vh - var(--nav-h) - 8px); }
+    #statusCard { width:calc(100vw - 24px); margin:0 var(--sp-3); }
+    #panel { transform:translateY(calc(100% - 44px));
+      transition:transform .25s var(--ease); }
+    #leftCol.drawer-open #panel { transform:translateY(0); }
+    #drawerToggle { display:block; position:sticky; top:0; z-index:5; width:100%;
+      background:var(--soft); border:none; padding:var(--sp-2); font-size:var(--fs-sm);
+      color:var(--accent-strong); font-weight:700; border-radius:var(--r-lg) var(--r-lg) 0 0; }
+    #legendBox { display:none !important; }   /* 移动端：现状卡已带等级色+分布条，浮层图例让位 */
+    #topbar { padding:0 var(--sp-3); gap:var(--sp-2); }
+    #topbar .sub { display:none; }
+    #topbar .logo { font-size:var(--fs-base); white-space:normal; line-height:1.3; }
+    .btn { min-height:44px; }
+    .layer-item { min-height:44px; }
+    #statCard { height:260px; }
+  }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div>
+    <div class="logo">福州城市空气质量时空插值分析与预警平台</div>
+    <div class="sub">Urban Air Quality Spatio-temporal Analysis &amp; Early-Warning Platform · Open-Meteo / CAMS · HJ 633-2012 · WebGIS 课程实习</div>
+  </div>
+  <div class="spacer"></div>
+  <div id="userbox"></div>
+</div>
+
+<div id="map"></div>
+
+<!-- 左侧弹性列：现状卡 + 功能面板自动堆叠，互不遮挡 -->
+<div id="leftCol">
+<!-- 首屏现状卡：0 点击回答"现在福州空气如何" -->
+<div id="statusCard">
+  <div id="statusBody" class="is-loading">
+    <div class="skel-line"></div><div class="skel-line" style="width:70%"></div>
+    <div class="skel-line" style="width:85%"></div><div class="skel-line" style="width:55%"></div>
+  </div>
+</div>
+
+<div id="panel">
+  <button id="drawerToggle">▲ 功能面板</button>
+  <div class="tabbar">
+    <div class="tab active" data-page="live">实时空气</div>
+    <div class="tab" data-page="time">时空分析</div>
+    <div class="tab" data-page="exposure">暴露评估</div>
+    <div class="tab" data-page="layers">专题图层</div>
+    <div class="tab" data-page="legacy">一阶段成果<sup>1</sup></div>
+  </div>
+
+  <!-- 实时空气 -->
+  <div class="page active" id="page-live">
+    <h4>污染物</h4>
+    <div class="row"><select id="aqPollutant" style="flex:1">
+      <option value="pm2_5">PM2.5</option><option value="pm10">PM10</option>
+      <option value="ozone">O₃</option><option value="nitrogen_dioxide">NO₂</option>
+    </select><button class="btn" id="btnAQRefresh" style="flex:0 0 auto">刷新</button></div>
+    <h4>空气质量图层</h4>
+    <div class="layer-item"><input type="checkbox" id="lyAQ" checked><span class="swatch" style="background:linear-gradient(90deg,#2E7D52,#E67E22,#5B1220)"></span> AQI 插值面（点图可查）</div>
+    <div class="layer-item"><input type="checkbox" id="lySamples"><span class="swatch" style="background:#0E7C86"></span> 采样点分布（144 点）</div>
+    <div class="layer-item"><input type="checkbox" id="lyGibs"><span class="swatch" style="background:#B8860B"></span> NASA 卫星气溶胶 AOD（真实·逐日）</div>
+    <div class="layer-item"><input type="checkbox" id="lyRadar"><span class="swatch" style="background:#7FB3D5"></span> 实时降水雷达（RainViewer·无雨则无回波）</div>
+    <div class="layer-item"><input type="checkbox" id="lySensors" data-requires="1"><span class="swatch" style="background:#B03A2E"></span> 实时雨量站（Open-Meteo·位置示意）</div>
+    <div class="layer-item"><input type="checkbox" id="lyStations"><span class="swatch" style="background:#8E2A3C"></span> 国控空气监测站（aqicn.org·需配 WAQI_TOKEN）</div>
+    <h4>POI 检索</h4>
+    <div class="row"><input type="text" id="poiKw" placeholder="输入设施名称关键字，如：师大 / 医院"></div>
+    <button class="btn" id="btnPoiSearch">检索定位</button>
+    <div class="hint" id="poiResult"></div>
+    <h4>数据说明</h4>
+    <div class="hint">浓度面 = Open-Meteo Air Quality（CAMS 同化产品）144 点批量采样 → IDW 插值，分级依据 HJ 633-2012。地图任意点击可查询该处浓度与健康建议。底图：OSM 本地瓦片缓存（离线可用）。<br><sup>1</sup> 一阶段洪涝应急模块（PostGIS+pgRouting），保留共存。</div>
+  </div>
+
+  <!-- 时空分析 -->
+  <div class="page" id="page-time">
+    <h4>30 天逐时浓度曲线</h4>
+    <div class="row"><label>污染物</label><select id="tsPollutant" style="flex:1">
+      <option value="pm2_5">PM2.5</option><option value="pm10">PM10</option>
+      <option value="ozone">O₃</option><option value="nitrogen_dioxide">NO₂</option>
+    </select><button class="btn gray" id="btnTsPoint" style="flex:0 0 auto">📍 选点</button></div>
+    <div class="hint" id="tsAnchor">分析点: 默认市中心（26.0745, 119.2965），可点「选点」在地图重设</div>
+    <div id="tsBody"><div class="skel-line"></div><div class="skel-line" style="width:70%"></div></div>
+    <div id="tsChart"></div>
+    <div id="tsReadout"></div>
+    <input type="range" id="tsSlider" min="0" max="0" value="0">
+    <div class="hint">拖动时间轴查看该时刻浓度与等级（地图 marker 联动）。分级着色依据 HJ 633-2012。</div>
+    <h4>分级占比（30 天）</h4>
+    <div id="tsStack"></div>
+  </div>
+
+  <!-- 暴露评估 -->
+  <div class="page" id="page-exposure">
+    <h4>敏感设施 × 污染面叠加</h4>
+    <div class="hint">学校 / 医院与实时插值污染面空间叠加，筛选处于指定等级及以上区域的设施。POI 库覆盖金山片区（86 条）；污染面分辨率约 4km/格。</div>
+    <div class="row"><label>设施</label><select id="expCat" style="flex:1">
+      <option value="school,hospital">学校 + 医院</option><option value="school">学校</option><option value="hospital">医院</option>
+    </select></div>
+    <div class="row"><label>等级阈值</label><select id="expLevel" style="flex:1">
+      <option value="轻度">轻度及以上</option><option value="中度">中度及以上</option><option value="重度">重度及以上</option>
+    </select><button class="btn" id="btnExposure" style="flex:0 0 auto">评估</button></div>
+    <div id="expBody"><div class="skel-line"></div><div class="skel-line" style="width:60%"></div></div>
+  </div>
+
+  <!-- 专题图层 -->
+  <div class="page" id="page-layers">
+    <h4>漫游工具</h4>
+    <div>
+      <button class="btn gray" id="btnZoomIn">放大</button>
+      <button class="btn gray" id="btnZoomOut">缩小</button>
+      <button class="btn gray" id="btnReset">复位</button>
+      <button class="btn gray" id="btnMeasure">测距</button>
+      <button class="btn orange" id="btnExport">导出地图PNG</button>
+    </div>
+    <h4>底图切换</h4>
+    <div class="row"><select id="basemapSel" style="flex:1">
+      <option value="local">本地瓦片（离线）</option>
+      <option value="osm">OpenStreetMap 在线</option>
+      <option value="tianditu">天地图（需在 .env 配 KEY）</option>
+    </select></div>
+    <h4>基础图层（默认关闭）</h4>
+    <div class="layer-item"><input type="checkbox" id="lyRoads"><span class="swatch" style="background:#555"></span> 路网图层</div>
+    <div class="layer-item"><input type="checkbox" id="lyPois"><span class="swatch" style="background:#2a7fbf"></span> POI 设施点</div>
+    <div class="layer-item"><input type="checkbox" id="lyFlood"><span class="swatch" style="background:#2a9fd8"></span> 淹没范围（一阶段¹）</div>
+    <div class="layer-item"><input type="checkbox" id="lyGrid"><span class="swatch" style="background:#f5c542"></span> 渔网统计网格</div>
+    <div class="hint">基础图层服务于一阶段洪涝模块与路网背景，在空气质量主叙事下默认关闭。</div>
+  </div>
+
+  <!-- 一阶段成果¹ -->
+  <div class="page" id="page-legacy">
+    <div class="hint" style="background:var(--soft);border-radius:var(--r-sm);padding:var(--sp-2) var(--sp-3)">
+      <b>一阶段成果¹</b>：平台第一阶段《暴雨内涝应急疏散与救援路径分析》功能全集（DEM 情景推演 + pgRouting），保留共存。分析类功能需登录。
+    </div>
+    <div class="legacy-nav">
+      <button class="btn gray active" data-lp="flood">淹没推演</button>
+      <button class="btn gray" data-lp="route">疏散路径</button>
+      <button class="btn gray" data-lp="shelter">避难选址</button>
+      <button class="btn gray" data-lp="stat">网格统计</button>
+    </div>
+
+    <div class="legacy-page active" id="lp-flood">
+      <h4>内涝淹没情景推演</h4>
+      <div class="hint">基于 DEM（AWS Terrarium 高程瓦片 z13，约 19m/像素）静态水位阈值的情景推演模型，约束淹没区与闽江水域连通。拖动滑块设定水位：</div>
+      <div class="row"><span class="level-val" id="levelVal">10.0 m</span><span class="hint" id="floodArea"></span></div>
+      <input type="range" id="levelSlider" min="6" max="15" step="1" value="10">
+      <div class="row" style="justify-content:space-between">
+        <button class="btn" id="btnPlay">▶ 时间序列回放</button>
+        <button class="btn gray" id="btnStop">停止</button>
+      </div>
+      <h4>淹没统计</h4>
+      <div class="result show" id="floodStat">加载中...</div>
+    </div>
+
+    <div class="legacy-page" id="lp-route">
+      <h4>疏散 / 救援路径分析（Dijkstra 最短路）</h4>
+      <div class="hint">依次点击下方按钮，再在地图上点击选取起终点。</div>
+      <div class="row">
+        <button class="btn" id="btnFrom">① 设起点</button>
+        <button class="btn" id="btnTo">② 设终点</button>
+      </div>
+      <div class="row">
+        <label>出行方式</label>
+        <select id="routeMode" style="flex:1"><option value="car">车行（救援通行）</option><option value="walk">步行（人员疏散）</option></select>
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto"><input type="checkbox" id="avoidFlood" checked style="width:auto"> 避开被淹没路段（按当前水位）</label>
+      </div>
+      <button class="btn" id="btnRoute" data-requires="1" style="width:100%">③ 计算路径</button>
+      <button class="btn gray" id="btnClearRoute" style="width:100%">清除路径</button>
+      <div class="result" id="routeResult"></div>
+    </div>
+
+    <div class="legacy-page" id="lp-shelter">
+      <h4>应急避难点选址分析</h4>
+      <div class="hint">候选设施（公园/学校/体育场馆/社区中心/医院）依据高程安全性 + 设施规模的多准则加权评分，滤除当前水位下被淹没者。</div>
+      <button class="btn" id="btnShelter" data-requires="1" style="width:100%">生成避难点推荐（按当前水位）</button>
+      <h4>服务区分析（pgr_drivingDistance）</h4>
+      <div class="row">
+        <button class="btn gray" id="btnServiceCenter" style="flex:0 0 auto">选中心点</button>
+        <span class="hint" id="serviceCenterHint">未选择</span>
+      </div>
+      <div class="row"><label>时间阈值 <b id="saMinVal">5</b> 分钟</label></div>
+      <input type="range" id="saMin" min="2" max="15" step="1" value="5">
+      <div class="row" style="justify-content:space-between">
+        <select id="saMode" style="flex:1"><option value="walk">步行</option><option value="car">车行</option></select>
+        <button class="btn" id="btnServiceArea" data-requires="1">计算服务区</button>
+      </div>
+      <h4>选址覆盖分析</h4>
+      <button class="btn orange" id="btnCoverage" data-requires="1" style="width:100%">计算候选避难点路网覆盖率</button>
+      <div class="result" id="shelterResult"></div>
+    </div>
+
+    <div class="legacy-page" id="lp-stat">
+      <h4>渔网网格空间统计</h4>
+      <div class="hint">500m 渔网网格与路网、淹没范围、POI 空间叠加，统计各网格内设施密度与受灾路段长度（点击柱状图可定位到具体网格）。</div>
+      <button class="btn" id="btnGridStat" data-requires="1" style="width:100%">生成网格统计（按当前水位）</button>
+      <h4>区域统计摘要</h4>
+      <div class="result show" id="regionStat">加载中...</div>
+    </div>
+  </div>
+</div>
+</div><!-- /leftCol -->
+
+<!-- 内涝预警横幅已下屏：数据源审计后由模拟水位驱动，不实上屏 -->
+
+<!-- 单一动态图例 -->
+<div id="legendBox"></div>
+
+<div id="statCard">
+  <div class="head"><span id="statTitle">网格统计</span><span class="close" id="statClose">✕</span></div>
+  <div id="statChart"></div>
+</div>
+
+<!-- 登录/注册弹窗 -->
+<div class="modal-mask" id="authMask">
+  <div class="modal">
+    <h3 id="authTitle">用户登录</h3>
+    <div class="row"><label>用户名</label><input type="text" id="authUser"></div>
+    <div class="row"><label>密码</label><input type="password" id="authPwd"></div>
+    <div class="err" id="authErr"></div>
+    <div class="row" style="flex-direction:row">
+      <button class="btn" id="authOk" style="flex:1">确定</button>
+      <button class="btn gray" id="authCancel" style="flex:1">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 用户管理弹窗（管理员） -->
+<div class="modal-mask" id="userMask">
+  <div class="modal">
+    <h3>用户管理</h3>
+    <table id="userTable"></table>
+    <div class="row" style="flex-direction:row;margin-top:var(--sp-3)">
+      <button class="btn gray" id="userModalClose" style="flex:1">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 401 非模态权限提示条 -->
+<div id="permBar">
+  <span>该功能需登录后使用（分析功能对注册用户开放）</span>
+  <button id="permLogin">去登录</button>
+  <span id="permClose">✕</span>
+</div>
+
+<div id="toast"></div>
+
+<script src="/static/js/main.js" type="module"></script>
+</body>
+</html>
