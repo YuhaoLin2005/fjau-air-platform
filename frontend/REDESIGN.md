@@ -1,8 +1,8 @@
 # REDESIGN.md — 《福州城市空气质量时空插值分析与预警平台》UI/交互全面重设计方案
 
-> 版本 v1（2026-09-19）。依据：Phase 1 三视角专家审查（`~/.zcode/grill_sessions/aq-ui-redesign/`：
-> product-ux.md / info-design.md / frontend-eng.md，共 7 P0 + 14 P1 + 若干 P2）+ FACTS.md + 后端源码核实。
-> 铁律：后端零改动（分层/权限/算法不动，pytest 11/11、oracle 6/6 必须保持）；vanilla + 设计令牌，无重框架。
+> 版本 v1（2026-09-19）。依据：三视角界面审查（产品 / 信息设计 / 前端工程，
+> 共 7 P0 + 14 P1 + 若干 P2）+ 后端源码核实。
+> 约束：后端零改动（分层/权限/算法不动，pytest 11/11、oracle 6/6 必须保持）；vanilla + 设计令牌，无重框架。
 
 ---
 
